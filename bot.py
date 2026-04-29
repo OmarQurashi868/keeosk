@@ -206,7 +206,7 @@ async def add_category(
         "bottom": bottom_role.id,
         "channel": channel.id,
         "message": None,
-        "mode": mode,
+        "mode": mode.value,
         "roles": []
     }
 
