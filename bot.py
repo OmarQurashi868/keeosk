@@ -176,12 +176,25 @@ async def update_all_categories(guild):
 # ------------------ COMMANDS ------------------
 
 @tree.command(name="add_category")
-async def add_category(interaction: discord.Interaction,
-                       name: str,
-                       top_role: discord.Role,
-                       bottom_role: discord.Role,
-                       channel: discord.TextChannel,
-                       mode: str):
+@app_commands.describe(
+    name="Category name",
+    top_role="Top role",
+    bottom_role="Bottom role",
+    channel="Channel",
+    mode="Selection mode"
+)
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Buttons (multi-select)", value="buttons"),
+    app_commands.Choice(name="Dropdown (single-select)", value="dropdown"),
+])
+async def add_category(
+    interaction: discord.Interaction,
+    name: str,
+    top_role: discord.Role,
+    bottom_role: discord.Role,
+    channel: discord.TextChannel,
+    mode: app_commands.Choice[str]
+):
 
     if not interaction.user.guild_permissions.manage_roles:
         return await interaction.response.send_message("Need Manage Roles permission.", ephemeral=True)
