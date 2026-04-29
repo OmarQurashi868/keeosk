@@ -18,7 +18,7 @@ docker pull ghcr.io/OmarQurashi868/keeosk
 docker run -d \
   --name keeosk \
   -e TOKEN=YOUR_BOT_TOKEN \
-  -v $(pwd)/data.json:/data/data.json \
+  -v /etc/keeosk-bot/data:/data \
   ghcr.io/OmarQurashi868/keeosk
 ```
 
@@ -39,7 +39,7 @@ services:
     environment:
       - TOKEN=YOUR_BOT_TOKEN
     volumes:
-      - ./data.json:/data/data.json
+      - /etc/keeosk-bot/data:/data
 ```
 
 Run:
