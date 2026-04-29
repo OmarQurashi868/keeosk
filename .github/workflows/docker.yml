@@ -3,6 +3,10 @@ name: Build and Publish Docker Image
 on:
   push:
     branches: ["main"]
+    paths:
+      - "bot.py"
+      - "requirements.txt"
+      - "Dockerfile"
 
 jobs:
   build-and-push:
