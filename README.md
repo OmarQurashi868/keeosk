@@ -2,6 +2,8 @@
 
 A simple Discord bot for creating **self-role panels** using buttons or dropdowns, based on role ranges.
 
+100% vibe-coded.
+
 ---
 
 ## 🚀 Run with Docker
