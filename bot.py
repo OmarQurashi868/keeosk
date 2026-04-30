@@ -12,14 +12,28 @@ DATA_FILE = os.getenv("DATA_FILE", "/data/data.json")
 
 def load_data() -> dict:
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(DATA_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "categories" in data:
+                    return data
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"⚠️  data.json is corrupted ({e}), resetting to empty state.")
+            # Back up the corrupted file before overwriting
+            corrupted_path = DATA_FILE + ".corrupted"
+            try:
+                os.replace(DATA_FILE, corrupted_path)
+                print(f"⚠️  Corrupted file saved to {corrupted_path}")
+            except OSError:
+                pass
     return {"categories": {}}
 
 def save_data(data: dict):
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, "w") as f:
+    tmp_path = DATA_FILE + ".tmp"
+    with open(tmp_path, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp_path, DATA_FILE)  # atomic on POSIX; safe on Windows too
 
 # ── Bot setup ─────────────────────────────────────────────────────────────────
 
@@ -147,12 +161,15 @@ async def handle_role_toggle(
     member = interaction.user
 
     if select_type == "single":
-        # Remove all other category roles first
+        already_has = target_role in member.roles
+
+        # Remove all other category roles (not the target — we handle that below)
         roles_to_remove = [r for r in member.roles if r.id in role_ids_in_cat and r.id != role_id]
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove, reason="Self-role: single-select swap")
 
-        if target_role in member.roles:
+        if already_has:
+            # Target was already assigned — just deselect it (already stripped above if it was "other", but here it IS the target)
             await member.remove_roles(target_role, reason="Self-role: deselect")
             await interaction.followup.send(f"✅ Removed **{target_role.name}**.", ephemeral=True)
         else:
@@ -413,29 +430,46 @@ async def refresh_category_cmd(interaction: discord.Interaction, name: str):
 
 # ── Auto-refresh on role changes ──────────────────────────────────────────────
 
-async def maybe_refresh_all(guild: discord.Guild):
-    """Re-render every category in the guild (called after role hierarchy changes)."""
+# Tracks pending debounce tasks per guild so rapid role changes collapse into one refresh
+_pending_refreshes: dict[int, asyncio.Task] = {}
+REFRESH_DEBOUNCE_SECONDS = 5
+
+
+async def _debounced_refresh(guild: discord.Guild):
+    """Wait for the debounce window, then refresh all categories once."""
+    await asyncio.sleep(REFRESH_DEBOUNCE_SECONDS)
+    _pending_refreshes.pop(guild.id, None)
     data = load_data()
-    for key, cat in data["categories"].items():
+    for key, cat in list(data["categories"].items()):
         if cat["guild_id"] == guild.id:
-            await refresh_category(guild, key, cat)
+            try:
+                await refresh_category(guild, key, cat)
+            except Exception as e:
+                print(f"⚠️  Error refreshing category {key}: {e}")
+
+
+def schedule_refresh(guild: discord.Guild):
+    """Cancel any existing pending refresh for this guild and schedule a new one."""
+    existing = _pending_refreshes.get(guild.id)
+    if existing and not existing.done():
+        existing.cancel()
+    _pending_refreshes[guild.id] = asyncio.create_task(_debounced_refresh(guild))
 
 
 @bot.event
 async def on_guild_role_create(role: discord.Role):
-    await maybe_refresh_all(role.guild)
+    schedule_refresh(role.guild)
 
 
 @bot.event
 async def on_guild_role_delete(role: discord.Role):
-    await maybe_refresh_all(role.guild)
+    schedule_refresh(role.guild)
 
 
 @bot.event
 async def on_guild_role_update(before: discord.Role, after: discord.Role):
-    # Only re-render if the position changed (affects which roles fall between bounds)
     if before.position != after.position or before.name != after.name:
-        await maybe_refresh_all(after.guild)
+        schedule_refresh(after.guild)
 
 
 # ── Persistent view re-registration on startup ────────────────────────────────
