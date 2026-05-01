@@ -106,7 +106,7 @@ class RoleSelect(discord.ui.Select):
         # Discord custom_id limit is 100 chars
         safe_key = category_key[-80:] if len(category_key) > 80 else category_key
         options = [
-            discord.SelectOption(label="None  —  remove all roles", value=NONE_SENTINEL, emoji="🚫"),
+            discord.SelectOption(label="-None-", value=NONE_SENTINEL),
         ] + [
             discord.SelectOption(label=r.name, value=str(r.id))
             for r in roles[:24]  # 24 roles + 1 None = 25 max
@@ -442,6 +442,51 @@ async def list_categories(interaction: discord.Interaction):
         )
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="resend-category", description="Delete the existing panel message and resend it (useful for reordering).")
+@app_commands.describe(
+    name="Name of the category to resend",
+    channel="Channel to send the new message in (leave blank to use the current channel)",
+)
+async def resend_category_cmd(interaction: discord.Interaction, name: str, channel: discord.TextChannel = None):
+    if not has_manage_roles(interaction):
+        await interaction.response.send_message("\u274c You need **Manage Roles** permission.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    data = load_data()
+    category_key = f"{interaction.guild.id}:{name.lower().replace(' ', '_')}"
+    cat = data["categories"].get(category_key)
+    if not cat:
+        await interaction.followup.send(f"\u274c No category named **{name}** found.", ephemeral=True)
+        return
+
+    # Delete old message if it exists
+    old_channel = interaction.guild.get_channel(cat["channel_id"])
+    if cat.get("message_id") and old_channel:
+        try:
+            old_msg = await old_channel.fetch_message(cat["message_id"])
+            await old_msg.delete()
+        except discord.NotFound:
+            pass
+
+    # Update channel if a new one was specified
+    if channel:
+        cat["channel_id"] = channel.id
+
+    # Clear message_id so refresh_category sends a fresh message
+    cat["message_id"] = None
+    data["categories"][category_key] = cat
+    save_data(data)
+
+    await refresh_category(interaction.guild, category_key, cat)
+    target = channel or old_channel
+    await interaction.followup.send(
+        f"\u2705 Category **{name}** resent{f' in {target.mention}' if target else ''}.",
+        ephemeral=True,
+    )
 
 
 @bot.tree.command(name="refresh-category", description="Manually refresh a category's message.")
