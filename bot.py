@@ -6,7 +6,7 @@ import os
 import asyncio
 
 TOKEN = os.getenv("TOKEN")
-DATA_FILE = os.getenv("DATA_FILE", "/data/data.json")
+DATA_FILE = os.getenv("DATA_FILE", "/colors/data.json")
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
 
@@ -98,29 +98,39 @@ class RoleButton(discord.ui.Button):
         )
 
 
+NONE_SENTINEL = "__none__"
+
+
 class RoleSelect(discord.ui.Select):
     def __init__(self, roles: list[discord.Role], category_key: str, select_type: str):
+        # Discord custom_id limit is 100 chars
+        safe_key = category_key[-80:] if len(category_key) > 80 else category_key
         options = [
+            discord.SelectOption(label="None  —  remove all roles", value=NONE_SENTINEL, emoji="🚫"),
+        ] + [
             discord.SelectOption(label=r.name, value=str(r.id))
-            for r in roles[:25]  # Discord limit
+            for r in roles[:24]  # 24 roles + 1 None = 25 max
         ]
         super().__init__(
             placeholder="Choose a role…",
             min_values=1,
             max_values=1,
             options=options,
-            custom_id=f"roleselect:{category_key}",
+            custom_id=f"rs:{safe_key}",
         )
         self.category_key = category_key
         self.select_type  = select_type
 
     async def callback(self, interaction: discord.Interaction):
-        await handle_role_toggle(
-            interaction,
-            self.category_key,
-            int(self.values[0]),
-            self.select_type,
-        )
+        if self.values[0] == NONE_SENTINEL:
+            await handle_role_clear(interaction, self.category_key)
+        else:
+            await handle_role_toggle(
+                interaction,
+                self.category_key,
+                int(self.values[0]),
+                self.select_type,
+            )
 
 
 def build_view(roles: list[discord.Role], category_key: str, select_type: str) -> discord.ui.View:
@@ -182,6 +192,32 @@ async def handle_role_toggle(
         else:
             await member.add_roles(target_role, reason="Self-role: toggle on")
             await interaction.followup.send(f"✅ Added **{target_role.name}**.", ephemeral=True)
+
+
+# ── None / clear-all handler ─────────────────────────────────────────────────
+
+async def handle_role_clear(interaction: discord.Interaction, category_key: str):
+    """Remove every role in this category from the member."""
+    await interaction.response.defer(ephemeral=True)
+
+    data  = load_data()
+    guild = interaction.guild
+    cat   = data["categories"].get(category_key)
+    if not cat:
+        await interaction.followup.send("❌ Category no longer exists.", ephemeral=True)
+        return
+
+    roles_in_cat    = get_roles_between(guild, cat["top_role_id"], cat["bottom_role_id"])
+    role_ids_in_cat = {r.id for r in roles_in_cat}
+    member          = interaction.user
+
+    to_remove = [r for r in member.roles if r.id in role_ids_in_cat]
+    if to_remove:
+        await member.remove_roles(*to_remove, reason="Self-role: cleared via None option")
+        names = ", ".join(f"**{r.name}**" for r in to_remove)
+        await interaction.followup.send(f"✅ Removed {names}.", ephemeral=True)
+    else:
+        await interaction.followup.send("ℹ️ You didn't have any roles from this category.", ephemeral=True)
 
 
 # ── Refresh a category message ────────────────────────────────────────────────
